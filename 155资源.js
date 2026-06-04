@@ -260,6 +260,7 @@ async function enrichVideosWithDetails(videos) {
     const batchIDs = videoIDs.slice(i, end);
     try {
       const response = await requestSiteAPI({ ac: "detail", ids: batchIDs.join(",") });
+      OmniBox.log("info", `详情返回: code=${response.code}, list数量=${response.list ? response.list.length : 0}`);
       if (Array.isArray(response.list)) {
         for (const item of response.list) {
           if (typeof item !== "object" || item === null) continue;
@@ -267,6 +268,7 @@ async function enrichVideosWithDetails(videos) {
           const originalVod = videoMap.get(vodId);
           if (originalVod) {
             const pic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
+            OmniBox.log("info", `更新图片: vodId=${vodId}, pic=${pic}`);
             if (pic && pic !== "<nil>") originalVod.vod_pic = pic;
             const year = item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : "");
             if (year && year !== "<nil>") originalVod.vod_year = year;
