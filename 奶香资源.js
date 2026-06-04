@@ -1,7 +1,7 @@
 // @name 奶香资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.1.0
+// @version 1.1.1
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/奶香资源.js
 
 /**
