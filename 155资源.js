@@ -143,7 +143,10 @@ function formatVideos(list) {
       return {
         vod_id: vodId,
         vod_name: fixEncoding(String(item.vod_name || item.VodName || "")),
-        vod_pic: item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : ""),
+        vod_pic: (() => {
+          const rawPic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
+          return rawPic && rawPic.startsWith("http://") ? rawPic.replace("http://", "https://") : rawPic;
+        })(),
         type_id: String(item.type_id || item.TypeID || ""),
         type_name: fixEncoding(String(item.type_name || item.TypeName || "")),
         vod_year: item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : ""),
@@ -205,7 +208,10 @@ function formatDetailVideos(list) {
       return {
         vod_id: vodId,
         vod_name: fixEncoding(String(item.vod_name || item.VodName || "")),
-        vod_pic: item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : ""),
+        vod_pic: (() => {
+          const rawPic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
+          return rawPic && rawPic.startsWith("http://") ? rawPic.replace("http://", "https://") : rawPic;
+        })(),
         type_name: fixEncoding(String(item.type_name || item.TypeName || "")),
         vod_year: item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : ""),
         vod_area: fixEncoding(String(item.vod_area || item.VodArea || "")),
@@ -268,8 +274,10 @@ async function enrichVideosWithDetails(videos) {
           const originalVod = videoMap.get(vodId);
           if (originalVod) {
             const pic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
-            OmniBox.log("info", `更新图片: vodId=${vodId}, pic=${pic}`);
-            if (pic && pic !== "<nil>") originalVod.vod_pic = pic;
+            // 把http://改成https://
+            const fixedPic = pic && pic.startsWith("http://") ? pic.replace("http://", "https://") : pic;
+            OmniBox.log("info", `更新图片: vodId=${vodId}, 原始pic=${pic}, 修复后=${fixedPic}`);
+            if (fixedPic && fixedPic !== "<nil>") originalVod.vod_pic = fixedPic;
             const year = item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : "");
             if (year && year !== "<nil>") originalVod.vod_year = year;
             const score = item.vod_douban_score ? String(item.vod_douban_score) : (item.VodDoubanScore ? String(item.VodDoubanScore) : "");
