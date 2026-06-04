@@ -287,6 +287,7 @@ async function enrichVideosWithDetails(videos) {
       OmniBox.log("warn", `批量获取详情失败: ${error.message}`);
     }
   }
+  OmniBox.log("info", `enrichVideosWithDetails 最终返回: 前3个视频的vod_pic=${videos.slice(0, 3).map(v => JSON.stringify(v.vod_pic)).join(", ")}`);
   return videos;
 }
 
@@ -428,7 +429,9 @@ async function home(params) {
     const classes = formatClasses(response.class || []);
     let videos = formatVideos(response.list || []);
     videos = await enrichVideosWithDetails(videos);
-    return { class: classes, list: videos };
+    const result = { class: classes, list: videos };
+    OmniBox.log("info", `home 返回: 前3个视频的vod_pic=${videos.slice(0, 3).map(v => JSON.stringify(v.vod_pic)).join(", ")}`);
+    return result;
   } catch (error) {
     return handleError(error, "获取首页数据", { class: [], list: [] });
   }
