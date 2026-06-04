@@ -442,7 +442,8 @@ async function category(params) {
     const page = normalizePage(params?.page);
     OmniBox.log("info", `获取分类数据: categoryId=${categoryId}, page=${page}`);
     const response = await requestSiteAPI({ ac: "videolist", t: categoryId, pg: String(page) });
-    const videos = formatVideos(response.list || []);
+    let videos = formatVideos(response.list || []);
+    videos = await enrichVideosWithDetails(videos);
     return {
       page: toInt(response.page),
       pagecount: toInt(response.pagecount),
