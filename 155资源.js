@@ -266,7 +266,6 @@ async function enrichVideosWithDetails(videos) {
     const batchIDs = videoIDs.slice(i, end);
     try {
       const response = await requestSiteAPI({ ac: "detail", ids: batchIDs.join(",") });
-      OmniBox.log("info", `详情返回: code=${response.code}, list数量=${response.list ? response.list.length : 0}`);
       if (Array.isArray(response.list)) {
         for (const item of response.list) {
           if (typeof item !== "object" || item === null) continue;
@@ -274,9 +273,7 @@ async function enrichVideosWithDetails(videos) {
           const originalVod = videoMap.get(vodId);
           if (originalVod) {
             const pic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
-            // 把http://改成https://
             const fixedPic = pic && pic.startsWith("http://") ? pic.replace("http://", "https://") : pic;
-            OmniBox.log("info", `更新图片: vodId=${vodId}, 原始pic=${pic}, 修复后=${fixedPic}`);
             if (fixedPic && fixedPic !== "<nil>") originalVod.vod_pic = fixedPic;
             const year = item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : "");
             if (year && year !== "<nil>") originalVod.vod_year = year;
@@ -295,7 +292,6 @@ async function enrichVideosWithDetails(videos) {
       OmniBox.log("warn", `批量获取详情失败: ${error.message}`);
     }
   }
-  OmniBox.log("info", `enrichVideosWithDetails 最终返回: 前3个视频的vod_pic=${videos.slice(0, 3).map(v => JSON.stringify(v.vod_pic)).join(", ")}`);
   return videos;
 }
 
@@ -437,9 +433,7 @@ async function home(params) {
     const classes = formatClasses(response.class || []);
     let videos = formatVideos(response.list || []);
     videos = await enrichVideosWithDetails(videos);
-    const result = { class: classes, list: videos };
-    OmniBox.log("info", `home 返回: 前3个视频的vod_pic=${videos.slice(0, 3).map(v => JSON.stringify(v.vod_pic)).join(", ")}`);
-    return result;
+    return { class: classes, list: videos };
   } catch (error) {
     return handleError(error, "获取首页数据", { class: [], list: [] });
   }
