@@ -143,15 +143,15 @@ function formatVideos(list) {
       return {
         vod_id: vodId,
         vod_name: fixEncoding(String(item.vod_name || item.VodName || "")),
-        vod_pic: String(item.vod_pic || item.VodPic || ""),
+        vod_pic: item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : ""),
         type_id: String(item.type_id || item.TypeID || ""),
         type_name: fixEncoding(String(item.type_name || item.TypeName || "")),
-        vod_year: String(item.vod_year || item.VodYear || ""),
+        vod_year: item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : ""),
         vod_remarks: fixEncoding(String(item.vod_remarks || item.VodRemarks || "")),
         vod_time: String(item.vod_time || item.VodTime || ""),
         vod_play_from: vodPlayFrom,
         vod_play_url: String(item.vod_play_url || item.VodPlayURL || ""),
-        vod_douban_score: String(item.vod_douban_score || item.VodDoubanScore || ""),
+        vod_douban_score: item.vod_douban_score ? String(item.vod_douban_score) : (item.VodDoubanScore ? String(item.VodDoubanScore) : ""),
       };
     })
     .filter((item) => item !== null && item.vod_id);
@@ -205,16 +205,16 @@ function formatDetailVideos(list) {
       return {
         vod_id: vodId,
         vod_name: fixEncoding(String(item.vod_name || item.VodName || "")),
-        vod_pic: String(item.vod_pic || item.VodPic || ""),
+        vod_pic: item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : ""),
         type_name: fixEncoding(String(item.type_name || item.TypeName || "")),
-        vod_year: String(item.vod_year || item.VodYear || ""),
+        vod_year: item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : ""),
         vod_area: fixEncoding(String(item.vod_area || item.VodArea || "")),
         vod_remarks: fixEncoding(String(item.vod_remarks || item.VodRemarks || "")),
         vod_actor: fixEncoding(String(item.vod_actor || item.VodActor || "")),
         vod_director: fixEncoding(String(item.vod_director || item.VodDirector || "")),
         vod_content: content,
         vod_play_sources: vodPlaySources.length > 0 ? vodPlaySources : undefined,
-        vod_douban_score: String(item.vod_douban_score || item.VodDoubanScore || ""),
+        vod_douban_score: item.vod_douban_score ? String(item.vod_douban_score) : (item.VodDoubanScore ? String(item.VodDoubanScore) : ""),
       };
     })
     .filter((item) => item !== null && item.vod_id);
