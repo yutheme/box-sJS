@@ -266,11 +266,11 @@ async function enrichVideosWithDetails(videos) {
           const vodId = String(item.vod_id || item.VodID || "");
           const originalVod = videoMap.get(vodId);
           if (originalVod) {
-            const pic = String(item.vod_pic || item.VodPic || "");
+            const pic = item.vod_pic ? String(item.vod_pic) : (item.VodPic ? String(item.VodPic) : "");
             if (pic && pic !== "<nil>") originalVod.vod_pic = pic;
-            const year = String(item.vod_year || item.VodYear || "");
+            const year = item.vod_year ? String(item.vod_year) : (item.VodYear ? String(item.VodYear) : "");
             if (year && year !== "<nil>") originalVod.vod_year = year;
-            const score = String(item.vod_douban_score || item.VodDoubanScore || "");
+            const score = item.vod_douban_score ? String(item.vod_douban_score) : (item.VodDoubanScore ? String(item.VodDoubanScore) : "");
             if (score && score !== "<nil>") originalVod.vod_douban_score = score;
             const en = String(item.vod_en || item.VodEn || "");
             if (en && en !== "<nil>") originalVod.vod_en = en;
