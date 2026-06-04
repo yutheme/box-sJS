@@ -237,11 +237,6 @@ function formatClasses(classes) {
     const originalTypeName = String(cls.type_name || cls.TypeName || "");
     const fixedTypeName = fixEncoding(originalTypeName).trim();
     
-    // 添加调试日志
-    if (originalTypeName !== fixedTypeName) {
-      OmniBox.log("info", `修复分类名称编码: 原始='${originalTypeName}', 修复后='${fixedTypeName}'`);
-    }
-    
     if (!typeId || seen.has(typeId)) continue;
     seen.add(typeId);
     result.push({ type_id: typeId, type_pid: typePid, type_name: fixedTypeName });
