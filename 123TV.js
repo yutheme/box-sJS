@@ -622,7 +622,7 @@ async function home(params) {
         };
     } catch (e) {
         logError("分类请求失败", e);
-        return { list: [], page: pg, pagecount: 0 };
+        return { list: [], page: 1, pagecount: 0 };
     }
 }
 
