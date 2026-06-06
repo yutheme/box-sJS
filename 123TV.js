@@ -262,46 +262,41 @@ function parseBasicInfo(html, videoId) {
  * 解析播放源数据
  */
 function parsePlaySourcesData(html, videoId, vodName) {
-    const scriptMatch = html.match(/var pp=({.*?});/s);
-    if (!scriptMatch) return null;
+  const scriptMatch = html.match(/var pp=({.*?});/s);
+  if (!scriptMatch) return null;
 
-    try {
-        const ppData = JSON.parse(scriptMatch[1]);
-        const vno = ppData.no;
-        const playFromArr = [];
-        const playUrlArr = [];
+  try {
+    const ppData = JSON.parse(scriptMatch[1]);
+    const playFromArr = [];
+    const playUrlArr = [];
 
-        for (const line of ppData.la || []) {
-            const [lineId, lineName, episodeCount] = line;
-            const episodes = [];
-
-            for (let i = 0; i < episodeCount; i++) {
-                episodes.push(`第${i + 1}集$/v/${vno}/${lineId}z${i}.html`);
-            }
-
-            if (episodes.length > 0) {
-                playFromArr.push(lineName);
-                playUrlArr.push(episodes.join('#'));
-            }
-        }
-
-        // T3格式数据
-        const vodPlayFrom = playFromArr.join('$$$');
-        const vodPlayUrl = playUrlArr.join('$$$');
-
-        // 转换为T4格式
-        const vodPlaySources = parsePlaySources(vodPlayFrom, vodPlayUrl, videoId, vodName);
-
-        logInfo("播放源解析完成", {
-            fromCount: playFromArr.length,
-            sources: vodPlaySources.length
-        });
-
-        return vodPlaySources;
-    } catch (e) {
-        logError("解析播放源数据失败", e);
-        return null;
+    for (const line of ppData.la || []) {
+      const [lineId, lineName, _, __, directUrl] = line;
+      
+      // 新格式直接有 m3u8 链接，将链接编码到播放标识中
+      const encodedUrl = Buffer.from(directUrl).toString('base64');
+      
+      playFromArr.push(lineName);
+      playUrlArr.push(`正片$${encodedUrl}`);
     }
+
+    // T3格式数据
+    const vodPlayFrom = playFromArr.join('$$$');
+    const vodPlayUrl = playUrlArr.join('$$$');
+
+    // 转换为T4格式
+    const vodPlaySources = parsePlaySources(vodPlayFrom, vodPlayUrl, videoId, vodName);
+
+    logInfo("播放源解析完成", {
+      fromCount: playFromArr.length,
+      sources: vodPlaySources.length
+    });
+
+    return vodPlaySources;
+  } catch (e) {
+    logError("解析播放源数据失败", e);
+    return null;
+  }
 }
 
 /**
@@ -771,7 +766,7 @@ async function play(params, context) {
     const episodeName = meta.fid || '';
     let scrapedDanmuFileName = '';
 
-    logInfo(`准备播放: ${playId}, URL: ${url}`);
+    logInfo(`准备播放: ${playId}`);
 
     try {
         if (vodId) {
@@ -795,53 +790,65 @@ async function play(params, context) {
                 if (metadata.scrapeData.title) {
                     vodName = metadata.scrapeData.title;
                 }
-                if (mapping?.episodeName) {
-                    episodeName = mapping.episodeName;
-                }
             }
         }
 
-        const res = await cachedRequest(url, { headers: def_headers });
-        const html = res.data;
+        // 检查 playId 是否是 base64 编码的链接（新格式）
+        let playUrl = '';
+        try {
+            const decodedUrl = Buffer.from(playId.split('$')[1] || playId, 'base64').toString();
+            if (decodedUrl.match(/https?:\/\//i)) {
+                playUrl = decodedUrl;
+                logInfo(`解码到直接播放地址: ${playUrl}`);
+            }
+        } catch (e) {
+            // 不是 base64，尝试旧方式
+            logInfo('不是 base64 编码的链接，尝试旧方式');
+        }
 
-        // 解析真实播放地址
-        const match = html.match(/data-src="([^"]+)"/);
-        if (match) {
-            const playUrl = match[1];
-            logInfo(`解析到播放地址: ${playUrl}`);
+        // 如果没有解码到链接，尝试旧方式（访问播放页）
+        if (!playUrl) {
+            const res = await cachedRequest(url, { headers: def_headers });
+            const html = res.data;
+            
+            const match = html.match(/data-src="([^"]+)"/);
+            if (match) {
+                playUrl = match[1];
+                logInfo(`从播放页解析到播放地址: ${playUrl}`);
+            }
+        }
 
-            // 检查是否是直接播放链接
-            if (playUrl.match(/\.(m3u8|mp4|flv|avi|mkv|ts)/i)) {
-                const response = {
-                    urls: [{ name: '默认', url: playUrl }],
-                    parse: 0,
-                    header: def_headers
-                };
+        if (playUrl && playUrl.match(/\.(m3u8|mp4|flv|avi|mkv|ts)/i)) {
+            const response = {
+                urls: [{ name: '默认', url: playUrl }],
+                parse: 0,
+                header: def_headers
+            };
 
-                if (DANMU_API && (vodName || meta.v)) {
-                    const fallbackVodName = meta.v || vodName;
-                    const fileName = scrapedDanmuFileName || buildFileNameForDanmu(fallbackVodName, episodeName);
-                    logInfo(`尝试匹配弹幕文件名: ${fileName}`);
-                    if (fileName) {
-                        const danmakuList = await matchDanmu(fileName);
-                        if (danmakuList && danmakuList.length > 0) {
-                            response.danmaku = danmakuList;
-                            logInfo('弹幕已添加到播放响应');
-                        }
+            if (DANMU_API && (vodName || meta.v)) {
+                const fallbackVodName = meta.v || vodName;
+                const fileName = scrapedDanmuFileName || buildFileNameForDanmu(fallbackVodName, episodeName);
+                logInfo(`尝试匹配弹幕文件名: ${fileName}`);
+                if (fileName) {
+                    const danmakuList = await matchDanmu(fileName);
+                    if (danmakuList && danmakuList.length > 0) {
+                        response.danmaku = danmakuList;
+                        logInfo('弹幕已添加到播放响应');
                     }
                 }
-
-                return response;
-
             }
+
+            return response;
         }
 
+        // 尝试嗅探（最后手段）
         const sniffResult = await sniff123tvPlay(url);
         if (sniffResult) {
             return sniffResult;
         }
     } catch (e) {
         logError("解析播放地址失败", e);
+        // 尝试嗅探
         const fallbackSniff = await sniff123tvPlay(url);
         if (fallbackSniff) {
             return fallbackSniff;
