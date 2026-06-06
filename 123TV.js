@@ -2,7 +2,7 @@
 // @author 
 // @description 刮削：支持，弹幕：支持，嗅探：支持，广告：菠菜
 // @dependencies: axios
-// @version 1.1.3
+// @version 1.1.4
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/123TV.js
 
 /**
@@ -61,8 +61,8 @@ const config = {
 // 缓存对象
 const cache = new Map();
 
-// 带缓存的请求函数
-const cachedRequest = async (url, options = {}) => {
+// 带缓存和重试的请求函数
+const cachedRequest = async (url, options = {}, retryCount = 3) => {
     const cacheKey = url;
     const now = Date.now();
     
@@ -77,23 +77,45 @@ const cachedRequest = async (url, options = {}) => {
         cache.delete(cacheKey);
     }
     
-    // 发起请求
-    const response = await axiosInstance.get(url, options);
-    
-    // 缓存结果
-    if (config.cache.enabled) {
-        cache.set(cacheKey, {
-            data: response,
-            timestamp: now
-        });
+    // 发起请求，带重试机制
+    let lastError;
+    for (let i = 0; i < retryCount; i++) {
+        try {
+            const response = await axiosInstance.get(url, options);
+            
+            // 检查 HTTP 状态码
+            if (response.status === 403) {
+                logInfo(`请求被拒绝 (403)，第 ${i + 1} 次重试...`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // 递增延迟
+                continue;
+            }
+            
+            // 缓存结果
+            if (config.cache.enabled) {
+                cache.set(cacheKey, {
+                    data: response,
+                    timestamp: now
+                });
+            }
+            
+            return response;
+        } catch (error) {
+            lastError = error;
+            logInfo(`请求失败 (${error.response?.status || 'network'})，第 ${i + 1} 次重试...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
     }
     
-    return response;
+    throw lastError;
 };
 
 const axiosInstance = axios.create({
     httpsAgent: config.ssl.disableVerification ? new https.Agent({ rejectUnauthorized: false }) : undefined,
-    timeout: config.request.timeout
+    timeout: config.request.timeout,
+    validateStatus: (status) => {
+        // 接受所有状态码，让我们在代码中处理 403
+        return status >= 200 && status < 600;
+    }
 });
 
 // 导出常用配置
