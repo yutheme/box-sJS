@@ -2,7 +2,7 @@
 // @author 
 // @description 刮削：支持，弹幕：支持，嗅探：支持，广告：菠菜
 // @dependencies: axios
-// @version 1.1.1
+// @version 1.1.2
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/123TV.js
 
 /**
