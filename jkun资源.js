@@ -1,7 +1,7 @@
 // @name jkun资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.0
+// @version 1.2.1
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/jkun资源.js
 
 /**
@@ -29,6 +29,7 @@ const cache = {
   danmu: new Map()
 };
 const CACHE_TTL = 5 * 60 * 1000; // 缓存5分钟
+const CACHE_MAX_SIZE = 200;
 // ==================== 缓存区域结束 ====================
 
 /**
@@ -101,6 +102,39 @@ function normalizePage(page) {
   return p < 1 ? 1 : p;
 }
 
+function normalizeString(value) {
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function pruneExpiredCache(cacheMap) {
+  const now = Date.now();
+  for (const [key, cached] of cacheMap.entries()) {
+    if (!cached || now - cached.timestamp >= CACHE_TTL) {
+      cacheMap.delete(key);
+    }
+  }
+  while (cacheMap.size > CACHE_MAX_SIZE) {
+    const oldestKey = cacheMap.keys().next().value;
+    if (oldestKey === undefined) break;
+    cacheMap.delete(oldestKey);
+  }
+}
+
+function getCached(cacheMap, key) {
+  const cached = cacheMap.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp >= CACHE_TTL) {
+    cacheMap.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function setCached(cacheMap, key, data) {
+  pruneExpiredCache(cacheMap);
+  cacheMap.set(key, { data, timestamp: Date.now() });
+  pruneExpiredCache(cacheMap);
+}
 function fixEncoding(str) {
   if (typeof str !== "string") return str;
   
@@ -161,8 +195,8 @@ function formatVideos(list) {
 function convertToPlaySources(vodPlayFrom, vodPlayUrl, vodId) {
   const playSources = [];
   if (!vodPlayFrom || !vodPlayUrl) return playSources;
-  const sourceNames = vodPlayFrom.split("$$$").map((n) => n.trim()).filter((n) => n);
-  const sourceUrls = vodPlayUrl.split("$$$").map((u) => u.trim()).filter((u) => u);
+  const sourceNames = vodPlayFrom.split("$$$").map((n) => n.trim());
+  const sourceUrls = vodPlayUrl.split("$$$").map((u) => u.trim());
   const maxLength = Math.max(sourceNames.length, sourceUrls.length);
   for (let i = 0; i < maxLength; i++) {
     const sourceName = sourceNames[i] || `线路${i + 1}`;
@@ -292,14 +326,10 @@ async function enrichVideosWithDetails(videos) {
 async function matchDanmu(fileName) {
   if (!DANMU_API || !fileName) return [];
   
-  if (cache.danmu.has(fileName)) {
-    const cached = cache.danmu.get(fileName);
-    if (Date.now() - cached.timestamp < CACHE_TTL) {
-      OmniBox.log("info", `使用缓存的弹幕数据: ${fileName}`);
-      return cached.data;
-    } else {
-      cache.danmu.delete(fileName);
-    }
+  const cached = getCached(cache.danmu, fileName);
+  if (cached) {
+    OmniBox.log("info", `使用缓存的弹幕数据: ${fileName}`);
+    return cached.data;
   }
   
   try {
@@ -312,18 +342,18 @@ async function matchDanmu(fileName) {
     });
     if (response.statusCode !== 200) {
       OmniBox.log("warn", `弹幕匹配失败: HTTP ${response.statusCode}`);
-      cache.danmu.set(fileName, { data: [], timestamp: Date.now() });
+      setCached(cache.danmu, fileName, []);
       return [];
     }
     const matchData = JSON.parse(response.body);
     if (!matchData.isMatched) {
       OmniBox.log("info", "弹幕未匹配到");
-      cache.danmu.set(fileName, { data: [], timestamp: Date.now() });
+      setCached(cache.danmu, fileName, []);
       return [];
     }
     const matches = matchData.matches || [];
     if (matches.length === 0) {
-      cache.danmu.set(fileName, { data: [], timestamp: Date.now() });
+      setCached(cache.danmu, fileName, []);
       return [];
     }
     const firstMatch = matches[0];
@@ -338,7 +368,7 @@ async function matchDanmu(fileName) {
     const danmakuURL = `${DANMU_API}/api/v2/comment/${episodeId}?format=xml`;
     OmniBox.log("info", `弹幕匹配成功: ${danmakuName} (episodeId: ${episodeId})`);
     const result = [{ name: danmakuName, url: danmakuURL }];
-    cache.danmu.set(fileName, { data: result, timestamp: Date.now() });
+    setCached(cache.danmu, fileName, result);
     return result;
   } catch (error) {
     OmniBox.log("warn", `弹幕匹配失败: ${error.message}`);
@@ -404,7 +434,7 @@ async function inferFileNameFromDetail(videoId, playId, cachedDetail) {
       const parts = seg.split("$");
       if (parts.length >= 2) {
         const epLabel = parts[0].trim();
-        const epURL = parts[1].trim();
+        const epURL = parts.slice(1).join("$").trim();
         if (epURL === playId || epURL.includes(playId) || playId.includes(epURL)) {
           const digits = extractDigits(epLabel);
           epNum = digits ? parseInt(digits, 10) : idx + 1;
@@ -448,14 +478,15 @@ async function home(params) {
 async function category(params) {
   const defaultResult = { page: 1, pagecount: 0, total: 0, list: [] };
   try {
-    const categoryId = params?.categoryId;
-    if (!categoryId || typeof categoryId !== 'string' || categoryId.trim() === '') {
+    const categoryId = normalizeString(params?.categoryId);
+    if (!categoryId) {
       throw new Error("分类ID不能为空或无效");
     }
     const page = normalizePage(params?.page);
     OmniBox.log("info", `获取分类数据: categoryId=${categoryId}, page=${page}`);
     const response = await requestSiteAPI({ ac: "videolist", t: categoryId, pg: String(page) });
-    const videos = formatVideos(response.list || []);
+    let videos = formatVideos(response.list || []);
+    videos = await enrichVideosWithDetails(videos);
     return {
       page: toInt(response.page),
       pagecount: toInt(response.pagecount),
@@ -470,8 +501,8 @@ async function category(params) {
 async function detail(params) {
   const defaultResult = { list: [] };
   try {
-    const videoId = params?.videoId;
-    if (!videoId || typeof videoId !== 'string' || videoId.trim() === '') {
+    const videoId = normalizeString(params?.videoId);
+    if (!videoId) {
       throw new Error("视频ID不能为空或无效");
     }
     OmniBox.log("info", `获取视频详情: videoId=${videoId}`);
@@ -479,10 +510,9 @@ async function detail(params) {
     // 缓存原始响应数据，供 play() 复用，避免重复请求
     if (response.list && response.list.length > 0) {
       const rawVideo = response.list[0];
-      cache.videoDetails.set(videoId, {
+      setCached(cache.videoDetails, videoId, {
         vod_name: rawVideo.vod_name || rawVideo.VodName || "",
-        vod_play_url: rawVideo.vod_play_url || rawVideo.VodPlayURL || "",
-        timestamp: Date.now()
+        vod_play_url: rawVideo.vod_play_url || rawVideo.VodPlayURL || ""
       });
     }
     const videos = formatDetailVideos(response.list || []);
@@ -501,16 +531,7 @@ async function search(params) {
     OmniBox.log("info", `搜索视频: keyword=${keyword}, page=${page}`);
     const response = await requestSiteAPI({ ac: "list", wd: keyword, pg: String(page) });
     let videos = formatVideos(response.list || []);
-    const needsDetail = videos.length > 0 && (!videos[0].vod_pic || videos[0].vod_pic === "");
-    if (needsDetail) {
-      try {
-        const videoIDs = videos.map((v) => v.vod_id);
-        const detailResponse = await requestSiteAPI({ ac: "detail", ids: videoIDs.join(",") });
-        videos = formatVideos(detailResponse.list || []);
-      } catch (error) {
-        OmniBox.log("warn", `获取搜索结果详情失败: ${error.message}`);
-      }
-    }
+    videos = await enrichVideosWithDetails(videos);
     return {
       page: toInt(response.page),
       pagecount: toInt(response.pagecount),
@@ -525,11 +546,11 @@ async function search(params) {
 async function play(params) {
   const defaultResult = { urls: [], flag: "", header: {} };
   try {
-    const playId = params?.playId;
-    if (!playId || typeof playId !== 'string' || playId.trim() === '') {
+    const playId = normalizeString(params?.playId);
+    if (!playId) {
       throw new Error("播放地址ID不能为空或无效");
     }
-    const flag = params?.flag || "";
+    const flag = normalizeString(params?.flag);
 
     let processedPlayId = playId;
     try {
@@ -541,7 +562,7 @@ async function play(params) {
     const videoId = extractVideoIdFromFlag(flag);
     OmniBox.log("info", `获取播放地址: playId=${processedPlayId}, flag=${flag}, videoId=${videoId}`);
 
-    const shouldParse = /\.(m3u8|mp4|flv|avi|wmv|mov|mkv|webm)$/i.test(processedPlayId) ? 0 : 1;
+    const shouldParse = /\.(m3u8|mp4|flv|avi|wmv|mov|mkv|webm)(?:[?#].*)?$/i.test(processedPlayId) ? 0 : 1;
     let playResponse = {
       urls: [{ name: "播放", url: processedPlayId }],
       flag: flag,
@@ -552,9 +573,9 @@ async function play(params) {
     if (DANMU_API && videoId) {
       // 优先使用 detail() 缓存的详情数据，避免重复 API 请求
       let fileName = "";
-      const cached = cache.videoDetails.get(videoId);
-      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        fileName = await inferFileNameFromDetail(videoId, processedPlayId, cached);
+      const cached = getCached(cache.videoDetails, videoId);
+      if (cached) {
+        fileName = await inferFileNameFromDetail(videoId, processedPlayId, cached.data);
       } else {
         fileName = await inferFileNameFromDetail(videoId, processedPlayId);
       }
