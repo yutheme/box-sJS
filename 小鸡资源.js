@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.3
+// @version 1.2.4
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -19,7 +19,8 @@
 const OmniBox = require("omnibox_sdk");
 
 // ==================== 配置区域 ====================
-const SITE_API = process.env.SITE_API || "https://api.xiaojizy.live/provide/vod";
+const SITE_API = process.env.SITE_API || "https://182.43.124.7/provide/vod";
+const SITE_HOST = process.env.SITE_HOST || "api.xiaojizy.live";
 const DANMU_API = process.env.DANMU_API || "http://192.168.0.123:9321/87654321";
 // ==================== 配置区域结束 ====================
 
@@ -59,14 +60,15 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
       const response = await OmniBox.request(url.toString(), {
         method: "GET",
         headers: { 
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/json, text/plain, */*",
-          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-          "Accept-Encoding": "gzip, deflate, br",
-          "Connection": "keep-alive",
-          "Referer": "https://api.xiaojizy.live/",
-          "Origin": "https://api.xiaojizy.live"
-        },
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Referer": "https://" + SITE_HOST + "/",
+        "Origin": "https://" + SITE_HOST,
+        "Host": SITE_HOST
+      },
         timeout: 15000,
         rejectUnauthorized: false
       });
