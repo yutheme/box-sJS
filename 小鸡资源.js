@@ -55,20 +55,25 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
     }
   });
   OmniBox.log("info", `请求采集站: ${url.toString()}`);
-  try {
-    const response = await OmniBox.request(url.toString(), {
-      method: "GET",
-      headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Accept-Charset": "utf-8"
-      },
-      timeout: 10000,
-    });
-    if (response.statusCode !== 200) {
-      throw new Error(`HTTP ${response.statusCode}: ${response.body}`);
-    }
-    if (!response.body) {
+    try {
+      const response = await OmniBox.request(url.toString(), {
+        method: "GET",
+        headers: { 
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Connection": "keep-alive",
+          "Referer": "https://api.xiaojizy.live/",
+          "Origin": "https://api.xiaojizy.live"
+        },
+        timeout: 15000,
+        rejectUnauthorized: false
+      });
+      if (response.statusCode !== 200) {
+        throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
+      }
+      if (!response.body) {
       throw new Error("响应体为空");
     }
     try {
