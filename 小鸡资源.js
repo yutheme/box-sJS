@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.3.1
+// @version 1.2.6
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -59,30 +59,20 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
   });
   OmniBox.log("info", `请求采集站: ${url.toString()}`);
     try {
-      let response = await OmniBox.request(url.toString(), {
+      const response = await OmniBox.request(url.toString(), {
         method: "GET",
-        headers: { 
-          "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-          "Accept": "application/json,text/html,*/*"
-        },
-        timeout: 10000,
+        headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Referer": "https://api.xiaojizy.live/",
+        "Origin": "https://api.xiaojizy.live"
+      },
+        timeout: 15000,
+        rejectUnauthorized: false
       });
-      // 跟随重定向（最多5次）
-      let redirectCount = 0;
-      while ((response.statusCode === 301 || response.statusCode === 302) && redirectCount < 5) {
-        const redirectUrl = response.headers?.location || response.headers?.Location;
-        OmniBox.log("info", `重定向 (${redirectCount + 1}): ${redirectUrl}`);
-        if (!redirectUrl) break;
-        response = await OmniBox.request(redirectUrl, {
-          method: "GET",
-          headers: { 
-            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-            "Accept": "application/json,text/html,*/*"
-          },
-          timeout: 10000,
-        });
-        redirectCount++;
-      }
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
       }
@@ -155,10 +145,10 @@ function setCached(cacheMap, key, data) {
 }
 function fixEncoding(str) {
   if (typeof str !== "string") return str;
-  
+
   const hasGarbled = /[\x80-\xFF]{2,}/.test(str) && !/[\u4e00-\u9fa5]/.test(str);
   if (!hasGarbled) return str;
-  
+
   try {
     const latin1Buffer = Buffer.from(str, "latin1");
     if (latin1Buffer.toString("utf8") !== str) {
@@ -283,12 +273,12 @@ function formatClasses(classes) {
     const typePid = String(cls.type_pid || cls.TypePID || "");
     const originalTypeName = String(cls.type_name || cls.TypeName || "");
     const fixedTypeName = fixEncoding(originalTypeName).trim();
-    
+
     // 添加调试日志
     if (originalTypeName !== fixedTypeName) {
       OmniBox.log("info", `修复分类名称编码: 原始='${originalTypeName}', 修复后='${fixedTypeName}'`);
     }
-    
+
     if (!typeId || seen.has(typeId)) continue;
     seen.add(typeId);
     result.push({ type_id: typeId, type_pid: typePid, type_name: fixedTypeName });
@@ -343,13 +333,13 @@ async function enrichVideosWithDetails(videos) {
 
 async function matchDanmu(fileName) {
   if (!DANMU_API || !fileName) return [];
-  
+
   const cached = getCached(cache.danmu, fileName);
   if (cached) {
     OmniBox.log("info", `使用缓存的弹幕数据: ${fileName}`);
     return cached.data;
   }
-  
+
   try {
     OmniBox.log("info", `匹配弹幕: fileName=${fileName}`);
     const matchUrl = `${DANMU_API}/api/v2/match`;
@@ -598,13 +588,13 @@ async function play(params) {
         fileName = await inferFileNameFromDetail(videoId, processedPlayId);
       }
       if (!fileName) fileName = inferFileNameFromURL(processedPlayId);
-      
+
       if (fileName) {
         const danmakuList = await matchDanmu(fileName);
         if (danmakuList.length > 0) playResponse.danmaku = danmakuList;
       }
     }
-    
+
     return playResponse;
   } catch (error) {
     return handleError(error, "获取播放地址", { ...defaultResult, flag: params?.flag || "" });
