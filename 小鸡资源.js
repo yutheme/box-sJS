@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.5
+// @version 1.2.6
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -17,6 +17,9 @@
  */
 
 const OmniBox = require("omnibox_sdk");
+
+// 禁用 SSL 证书验证（采集站使用自签名证书）
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // ==================== 配置区域 ====================
 const SITE_API = process.env.SITE_API || "https://api.xiaojizy.live/provide/vod";
