@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.8
+// @version 1.2.9
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -62,7 +62,7 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
   });
   OmniBox.log("info", `请求采集站: ${url.toString()}`);
     try {
-      const response = await OmniBox.request(url.toString(), {
+      let response = await OmniBox.request(url.toString(), {
         method: "GET",
         headers: { 
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -72,6 +72,23 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
         },
         timeout: 10000,
       });
+      // 跟随重定向（最多5次）
+      let redirectCount = 0;
+      while ((response.statusCode === 301 || response.statusCode === 302) && redirectCount < 5) {
+        const redirectUrl = response.headers?.location || response.headers?.Location;
+        OmniBox.log("info", `重定向 (${redirectCount + 1}): ${redirectUrl}`);
+        if (!redirectUrl) break;
+        response = await OmniBox.request(redirectUrl, {
+          method: "GET",
+          headers: { 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Accept-Charset": "utf-8"
+          },
+          timeout: 10000,
+        });
+        redirectCount++;
+      }
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
       }
