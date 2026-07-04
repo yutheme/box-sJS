@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.6
+// @version 1.2.7
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -62,17 +62,35 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
       const response = await OmniBox.request(url.toString(), {
         method: "GET",
         headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Referer": "https://api.xiaojizy.live/",
-        "Origin": "https://api.xiaojizy.live"
-      },
-        timeout: 15000,
-        rejectUnauthorized: false
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+          "Accept-Charset": "utf-8"
+        },
+        timeout: 10000,
       });
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        const redirectUrl = response.headers?.location || response.headers?.Location;
+        if (redirectUrl) {
+          OmniBox.log("info", `跟随重定向到: ${redirectUrl}`);
+          const redirectResponse = await OmniBox.request(redirectUrl, {
+            method: "GET",
+            headers: { 
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "application/json",
+              "Accept-Charset": "utf-8"
+            },
+            timeout: 10000,
+          });
+          if (redirectResponse.statusCode !== 200) {
+            throw new Error(`HTTP ${redirectResponse.statusCode}: ${redirectResponse.body?.substring(0, 200) || ''}`);
+          }
+          if (!redirectResponse.body) {
+            throw new Error("响应体为空");
+          }
+          return JSON.parse(redirectResponse.body);
+        }
+        throw new Error(`HTTP ${response.statusCode} 重定向但未提供 Location`);
+      }
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
       }
