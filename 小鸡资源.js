@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.2.7
+// @version 1.2.8
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -22,7 +22,10 @@ const OmniBox = require("omnibox_sdk");
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // ==================== 配置区域 ====================
-const SITE_API = process.env.SITE_API || "https://api.xiaojizy.live/provide/vod";
+// 使用 IP 直接访问，绕过 CDN 的 JavaScript 验证挑战
+// 如果 IP 失效，请通过 nslookup api.xiaojizy.live 获取新 IP
+const SITE_API = process.env.SITE_API || "https://182.43.124.7/provide/vod";
+const SITE_HOST = process.env.SITE_HOST || "api.xiaojizy.live";
 const DANMU_API = process.env.DANMU_API || "http://192.168.0.123:9321/87654321";
 // ==================== 配置区域结束 ====================
 
@@ -64,33 +67,11 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
         headers: { 
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           "Accept": "application/json",
-          "Accept-Charset": "utf-8"
+          "Accept-Charset": "utf-8",
+          "Host": SITE_HOST
         },
         timeout: 10000,
       });
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        const redirectUrl = response.headers?.location || response.headers?.Location;
-        if (redirectUrl) {
-          OmniBox.log("info", `跟随重定向到: ${redirectUrl}`);
-          const redirectResponse = await OmniBox.request(redirectUrl, {
-            method: "GET",
-            headers: { 
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-              "Accept": "application/json",
-              "Accept-Charset": "utf-8"
-            },
-            timeout: 10000,
-          });
-          if (redirectResponse.statusCode !== 200) {
-            throw new Error(`HTTP ${redirectResponse.statusCode}: ${redirectResponse.body?.substring(0, 200) || ''}`);
-          }
-          if (!redirectResponse.body) {
-            throw new Error("响应体为空");
-          }
-          return JSON.parse(redirectResponse.body);
-        }
-        throw new Error(`HTTP ${response.statusCode} 重定向但未提供 Location`);
-      }
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
       }
