@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.3.0
+// @version 1.3.1
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -22,8 +22,7 @@ const OmniBox = require("omnibox_sdk");
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // ==================== 配置区域 ====================
-// 使用 HTTP 协议访问，绕过 CDN 的 HTTPS JavaScript 验证挑战
-const SITE_API = process.env.SITE_API || "http://api.xiaojizy.live/provide/vod";
+const SITE_API = process.env.SITE_API || "https://api.xiaojizy.live/provide/vod";
 const DANMU_API = process.env.DANMU_API || "http://192.168.0.123:9321/87654321";
 // ==================== 配置区域结束 ====================
 
@@ -63,9 +62,8 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
       let response = await OmniBox.request(url.toString(), {
         method: "GET",
         headers: { 
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept": "application/json",
-          "Accept-Charset": "utf-8"
+          "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+          "Accept": "application/json,text/html,*/*"
         },
         timeout: 10000,
       });
@@ -78,9 +76,8 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
         response = await OmniBox.request(redirectUrl, {
           method: "GET",
           headers: { 
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-            "Accept-Charset": "utf-8"
+            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Accept": "application/json,text/html,*/*"
           },
           timeout: 10000,
         });
