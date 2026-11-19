@@ -1,6 +1,6 @@
 // @name 小鸡资源
 // @author vscode (modified for per-source DoH)
-// @version 1.3.3
+// @version 1.3.4
 // @description 刮削：支持，弹幕：支持，嗅探：支持
 
 /**
@@ -54,7 +54,26 @@ const DOH_RESOLVERS = [
   { name: "Cloudflare", hostname: "cloudflare-dns.com", ip: "1.1.1.1", endpoint: "/dns-query" },
 ];
 const DOH_TARGET_HOST = "api.xiaojizy.live";
+// Fast path: this IP was verified reachable from the user's NAS.
+// If it stops working, DoH automatically locates a new working CDN address.
+// To change preferred IP later, edit only this constant.
+const FAST_PRIMARY_IP = "152.233.22.102";
+let activeSiteIP = FAST_PRIMARY_IP;
 const dohCache = { hostname: "", ips: [], expiresAt: 0 };
+
+// Keep TCP/TLS sockets alive for sequential home/detail requests.
+// Separate agents by destination IP so a fallback never reuses the old IP's socket.
+const pinnedAgents = new Map();
+function getPinnedAgent(hostname, ip) {
+  const key = `${hostname}|${ip}`;
+  if (!pinnedAgents.has(key)) {
+    pinnedAgents.set(key, new https.Agent({
+      keepAlive: true, keepAliveMsecs: 1000, maxSockets: 4, maxFreeSockets: 2,
+      timeout: 20000,
+    }));
+  }
+  return pinnedAgents.get(key);
+}
 
 function isPublicIPv4(address) {
   if (net.isIP(address) !== 4) return false;
@@ -78,7 +97,7 @@ function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxByte
       method: "GET",
       headers,
       family: 4,
-      agent: false,
+      agent: getPinnedAgent(url.hostname, ip),
       servername: url.hostname,
       rejectUnauthorized: true,
       lookup: (_hostname, _options, callback) => callback(null, ip, 4),
@@ -142,7 +161,7 @@ async function requestSiteWithDoH(url, headers) {
   const attempted = new Set();
   const errors = [];
 
-  async function tryIPs(ips) {
+  async function tryIPs(ips, timeoutMs = 12000) {
     for (const ip of ips) {
       if (attempted.has(ip)) continue;
       attempted.add(ip);
@@ -150,41 +169,56 @@ async function requestSiteWithDoH(url, headers) {
         const response = await httpsGetUsingIP(url.toString(), ip, {
           ...headers,
           "Accept-Encoding": "identity",
-        });
+        }, timeoutMs);
         if (response.statusCode !== 200 || !response.body) {
           throw new Error(`HTTP ${response.statusCode} / empty body`);
         }
-        OmniBox.log("info", `[DoH] Connected to ${hostname} via ${ip}`);
-        return response;
+        OmniBox.log("info", `[Fast/DoH] Connected to ${hostname} via ${ip}`);
+        return { ip, response };
       } catch (error) {
         errors.push(`${ip}: ${error.message}`);
-        OmniBox.log("warn", `[DoH] CDN node failed: ${ip} (${error.message})`);
+        OmniBox.log("warn", `[Fast/DoH] CDN node failed: ${ip} (${error.message})`);
       }
     }
     return null;
   }
 
-  if (dohCache.hostname === hostname && Date.now() < dohCache.expiresAt) {
-    const cached = await tryIPs(dohCache.ips);
-    if (cached) return cached;
+  // Normal case: avoid DoH overhead and use the previously working IP directly.
+  // During a single execution, remember a DoH-recovered IP for all later calls.
+  if (activeSiteIP) {
+    const fastResult = await tryIPs([activeSiteIP], 5500);
+    if (fastResult) return fastResult.response;
+    activeSiteIP = "";
   }
 
+  // If a prior DoH result is still fresh, try it without another DNS lookup.
+  if (dohCache.hostname === hostname && Date.now() < dohCache.expiresAt) {
+    const cached = await tryIPs(dohCache.ips);
+    if (cached) {
+      activeSiteIP = cached.ip;
+      return cached.response;
+    }
+  }
+
+  // Recovery only: use encrypted DNS when the fast IP fails, then keep using
+  // the recovered IP until that node fails. This minimizes routine latency.
   for (const resolver of DOH_RESOLVERS) {
     try {
       const answer = await queryDNSOverHTTPS(hostname, resolver);
       const result = await tryIPs(answer.ips);
       if (result) {
+        activeSiteIP = result.ip;
         dohCache.hostname = hostname;
         dohCache.ips = answer.ips;
         dohCache.expiresAt = Date.now() + answer.ttl * 1000;
-        return result;
+        return result.response;
       }
     } catch (error) {
       errors.push(`${resolver.name}: ${error.message}`);
       OmniBox.log("warn", `[DoH] ${resolver.name} unavailable: ${error.message}`);
     }
   }
-  throw new Error(`DoH direct request failed: ${errors.join("; ").slice(0, 500)}`);
+  throw new Error(`DoH recovery failed: ${errors.join("; ").slice(0, 500)}`);
 }
 
 async function requestSiteAPI(params = {}, retryCount = 3) {
@@ -213,7 +247,7 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
       try {
         response = await requestSiteWithDoH(url, headers);
       } catch (dohError) {
-        // During migration, the existing extra_hosts entry remains a safe fallback.
+        // Last-resort fallback. Without extra_hosts, normal DNS may still be blocked.
         OmniBox.log("warn", `[DoH] Falling back to original OmniBox.request: ${dohError.message}`);
         response = await OmniBox.request(url.toString(), {
           method: "GET", headers, timeout: 15000, rejectUnauthorized: false,
