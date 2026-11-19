@@ -1,8 +1,7 @@
 // @name 小鸡资源
-// @author vscode
+// @author vscode (modified for per-source DoH)
+// @version 1.3.3
 // @description 刮削：支持，弹幕：支持，嗅探：支持
-// @version 1.3.2
-// @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
  * OmniBox 采集站爬虫 - 小鸡资源
@@ -17,9 +16,10 @@
  */
 
 const OmniBox = require("omnibox_sdk");
+const https = require("https");
+const zlib = require("zlib");
+const net = require("net");
 
-// 禁用 SSL 证书验证（采集站使用自签名证书）
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // ==================== 配置区域 ====================
 const SITE_API = process.env.SITE_API || "https://api.xiaojizy.live/provide/vod";
@@ -47,9 +47,149 @@ function handleError(error, context, defaultResult) {
 /**
  * 发送 HTTP 请求到采集站
  */
+// DoH queries connect to fixed resolver IPs, so they do not depend on
+// potentially poisoned DNS. HTTPS SNI / Host / certificate checks stay intact.
+const DOH_RESOLVERS = [
+  { name: "Google", hostname: "dns.google", ip: "8.8.8.8", endpoint: "/resolve" },
+  { name: "Cloudflare", hostname: "cloudflare-dns.com", ip: "1.1.1.1", endpoint: "/dns-query" },
+];
+const DOH_TARGET_HOST = "api.xiaojizy.live";
+const dohCache = { hostname: "", ips: [], expiresAt: 0 };
+
+function isPublicIPv4(address) {
+  if (net.isIP(address) !== 4) return false;
+  const o = address.split(".").map(Number);
+  if (o[0] === 0 || o[0] === 10 || o[0] === 127 || o[0] >= 224) return false;
+  if (o[0] === 169 && o[1] === 254) return false;
+  if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return false;
+  if (o[0] === 192 && o[1] === 168) return false;
+  if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return false;
+  if (o[0] === 198 && (o[1] === 18 || o[1] === 19)) return false;
+  return true;
+}
+
+function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxBytes = 32 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(targetUrl);
+    if (url.protocol !== "https:" || !isPublicIPv4(ip)) {
+      return reject(new Error("Only HTTPS and public IPv4 are allowed"));
+    }
+    const req = https.request(url, {
+      method: "GET",
+      headers,
+      family: 4,
+      agent: false,
+      servername: url.hostname,
+      rejectUnauthorized: true,
+      lookup: (_hostname, _options, callback) => callback(null, ip, 4),
+    }, (res) => {
+      const chunks = [];
+      let byteCount = 0;
+      res.on("data", (chunk) => {
+        byteCount += chunk.length;
+        if (byteCount > maxBytes) {
+          req.destroy(new Error("HTTP response size exceeds limit"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on("error", reject);
+      res.on("end", () => {
+        try {
+          let buffer = Buffer.concat(chunks);
+          const encoding = String(res.headers["content-encoding"] || "").toLowerCase();
+          if (encoding.includes("gzip")) buffer = zlib.gunzipSync(buffer);
+          else if (encoding.includes("br")) buffer = zlib.brotliDecompressSync(buffer);
+          else if (encoding.includes("deflate")) buffer = zlib.inflateSync(buffer);
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: buffer.toString("utf8") });
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("HTTPS request timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function queryDNSOverHTTPS(hostname, resolver) {
+  const queryUrl = `https://${resolver.hostname}${resolver.endpoint}?name=${encodeURIComponent(hostname)}&type=A`;
+  const response = await httpsGetUsingIP(queryUrl, resolver.ip, {
+    "Accept": "application/dns-json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "OmniBox-DoH/1.0",
+  }, 7000, 256 * 1024);
+  if (response.statusCode !== 200) {
+    throw new Error(`${resolver.name} DoH HTTP ${response.statusCode}`);
+  }
+  const data = JSON.parse(response.body);
+  if (data.Status !== 0 || !Array.isArray(data.Answer)) {
+    throw new Error(`${resolver.name} DoH status ${data.Status ?? "unknown"}`);
+  }
+  const records = data.Answer.filter((record) =>
+    record.type === 1 && typeof record.data === "string" && isPublicIPv4(record.data)
+  );
+  const ips = [...new Set(records.map((record) => record.data))];
+  if (!ips.length) throw new Error(`${resolver.name} DoH returned no usable IPv4`);
+  const ttl = Math.max(5, Math.min(300, ...records.map((record) => Number(record.TTL) || 30)));
+  OmniBox.log("info", `[DoH] ${resolver.name}: ${hostname} => ${ips.join(", ")} (TTL ${ttl}s)`);
+  return { ips, ttl };
+}
+
+async function requestSiteWithDoH(url, headers) {
+  const hostname = url.hostname;
+  const attempted = new Set();
+  const errors = [];
+
+  async function tryIPs(ips) {
+    for (const ip of ips) {
+      if (attempted.has(ip)) continue;
+      attempted.add(ip);
+      try {
+        const response = await httpsGetUsingIP(url.toString(), ip, {
+          ...headers,
+          "Accept-Encoding": "identity",
+        });
+        if (response.statusCode !== 200 || !response.body) {
+          throw new Error(`HTTP ${response.statusCode} / empty body`);
+        }
+        OmniBox.log("info", `[DoH] Connected to ${hostname} via ${ip}`);
+        return response;
+      } catch (error) {
+        errors.push(`${ip}: ${error.message}`);
+        OmniBox.log("warn", `[DoH] CDN node failed: ${ip} (${error.message})`);
+      }
+    }
+    return null;
+  }
+
+  if (dohCache.hostname === hostname && Date.now() < dohCache.expiresAt) {
+    const cached = await tryIPs(dohCache.ips);
+    if (cached) return cached;
+  }
+
+  for (const resolver of DOH_RESOLVERS) {
+    try {
+      const answer = await queryDNSOverHTTPS(hostname, resolver);
+      const result = await tryIPs(answer.ips);
+      if (result) {
+        dohCache.hostname = hostname;
+        dohCache.ips = answer.ips;
+        dohCache.expiresAt = Date.now() + answer.ttl * 1000;
+        return result;
+      }
+    } catch (error) {
+      errors.push(`${resolver.name}: ${error.message}`);
+      OmniBox.log("warn", `[DoH] ${resolver.name} unavailable: ${error.message}`);
+    }
+  }
+  throw new Error(`DoH direct request failed: ${errors.join("; ").slice(0, 500)}`);
+}
+
 async function requestSiteAPI(params = {}, retryCount = 3) {
   if (!SITE_API) {
-    throw new Error("请配置采集站 API 地址（SITE_API 环境变量）");
+    throw new Error("Please configure SITE_API");
   }
   const url = new URL(SITE_API);
   Object.keys(params).forEach((key) => {
@@ -57,39 +197,48 @@ async function requestSiteAPI(params = {}, retryCount = 3) {
       url.searchParams.append(key, params[key]);
     }
   });
-  OmniBox.log("info", `请求采集站: ${url.toString()}`);
-    try {
-      const response = await OmniBox.request(url.toString(), {
-        method: "GET",
-        headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Referer": "https://api.xiaojizy.live/",
-        "Origin": "https://api.xiaojizy.live"
-      },
-        timeout: 15000,
-        rejectUnauthorized: false
-      });
-      if (response.statusCode !== 200) {
-        throw new Error(`HTTP ${response.statusCode}: ${response.body?.substring(0, 200) || ''}`);
+  OmniBox.log("info", `Requesting site: ${url.toString()}`);
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Referer": `${url.origin}/`,
+    "Origin": url.origin,
+  };
+  try {
+    let response;
+    if (url.hostname === DOH_TARGET_HOST && url.protocol === "https:") {
+      try {
+        response = await requestSiteWithDoH(url, headers);
+      } catch (dohError) {
+        // During migration, the existing extra_hosts entry remains a safe fallback.
+        OmniBox.log("warn", `[DoH] Falling back to original OmniBox.request: ${dohError.message}`);
+        response = await OmniBox.request(url.toString(), {
+          method: "GET", headers, timeout: 15000, rejectUnauthorized: false,
+        });
       }
-      if (!response.body) {
-      throw new Error("响应体为空");
+    } else {
+      response = await OmniBox.request(url.toString(), {
+        method: "GET", headers, timeout: 15000, rejectUnauthorized: false,
+      });
     }
+    if (response.statusCode !== 200) {
+      throw new Error(`HTTP ${response.statusCode}: ${(response.body || "").substring(0, 200)}`);
+    }
+    if (!response.body) throw new Error("Empty response body");
     try {
       return JSON.parse(response.body);
     } catch (parseError) {
-      OmniBox.log("error", `JSON 解析失败: ${parseError.message}, 响应内容: ${response.body.substring(0, 200)}`);
-      throw new Error(`JSON 解析失败: ${parseError.message}`);
+      OmniBox.log("error", `JSON parse failed: ${parseError.message}, content: ${response.body.substring(0, 200)}`);
+      throw parseError;
     }
   } catch (error) {
-    OmniBox.log("error", `请求采集站失败: ${error.message}`);
+    OmniBox.log("error", `Request to site failed: ${error.message}`);
     if (retryCount > 0) {
-      OmniBox.log("info", `重试请求 (${4 - retryCount}/3)`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      OmniBox.log("info", `Retry request (${4 - retryCount}/3)`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       return requestSiteAPI(params, retryCount - 1);
     }
     throw error;
