@@ -1,8 +1,8 @@
 // @name 小鸡资源
 // @author vscode (modified for per-source DoH)
-// @version 1.3.5
-// @description 刮削：支持，弹幕：支持，嗅探：支持；DoH IP 持久化缓存
+// @version 1.3.6
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
+// @description 刮削：支持，弹幕：支持，嗅探：支持；DoH IP 持久化缓存与严格公网 IP 校验
 
 /**
  * OmniBox 采集站爬虫 - 小鸡资源
@@ -72,7 +72,8 @@ function loadPersistedSiteIP() {
       OmniBox.log("info", `[IPCache] Loaded preferred IP ${data.ip} (saved ${data.updatedAt || "time unknown"})`);
       return data.ip;
     }
-    OmniBox.log("warn", "[IPCache] Cache file is invalid; using bootstrap IP");
+    OmniBox.log("warn", "[IPCache] Cache file is invalid or contains a non-global IP; using bootstrap IP");
+    try { fs.unlinkSync(DNS_CACHE_FILE); } catch (_) {}
   } catch (error) {
     OmniBox.log("warn", `[IPCache] Could not read cache: ${error.message}`);
   }
@@ -135,16 +136,47 @@ function getPinnedAgent(hostname, ip) {
   return pinnedAgents.get(key);
 }
 
+function ipv4ToUint32(address) {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return (((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0;
+}
+
+function cidrContains(ipNumber, cidr) {
+  const parts = cidr.split("/");
+  const baseNumber = ipv4ToUint32(parts[0]);
+  const prefix = Number(parts[1]);
+  if (baseNumber === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return ((ipNumber & mask) >>> 0) === ((baseNumber & mask) >>> 0);
+}
+
+// Reject special-use, private, documentation, benchmarking, multicast and
+// reserved IPv4 ranges. In particular, TEST-NET-1/2/3 must never be accepted
+// as a usable CDN address (203.0.113.0/24 was missed in v1.3.5).
+const NON_GLOBAL_IPV4_CIDRS = [
+  "0.0.0.0/8",
+  "10.0.0.0/8",
+  "100.64.0.0/10",
+  "127.0.0.0/8",
+  "169.254.0.0/16",
+  "172.16.0.0/12",
+  "192.0.0.0/24",
+  "192.0.2.0/24",
+  "192.88.99.0/24",
+  "192.168.0.0/16",
+  "198.18.0.0/15",
+  "198.51.100.0/24",
+  "203.0.113.0/24",
+  "224.0.0.0/4",
+  "240.0.0.0/4",
+];
+
 function isPublicIPv4(address) {
   if (net.isIP(address) !== 4) return false;
-  const o = address.split(".").map(Number);
-  if (o[0] === 0 || o[0] === 10 || o[0] === 127 || o[0] >= 224) return false;
-  if (o[0] === 169 && o[1] === 254) return false;
-  if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return false;
-  if (o[0] === 192 && o[1] === 168) return false;
-  if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return false;
-  if (o[0] === 198 && (o[1] === 18 || o[1] === 19)) return false;
-  return true;
+  const ipNumber = ipv4ToUint32(address);
+  if (ipNumber === null) return false;
+  return !NON_GLOBAL_IPV4_CIDRS.some((cidr) => cidrContains(ipNumber, cidr));
 }
 
 function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxBytes = 32 * 1024 * 1024) {
@@ -180,7 +212,7 @@ function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxByte
           if (encoding.includes("gzip")) buffer = zlib.gunzipSync(buffer);
           else if (encoding.includes("br")) buffer = zlib.brotliDecompressSync(buffer);
           else if (encoding.includes("deflate")) buffer = zlib.inflateSync(buffer);
-          resolve({ statusCode: res.statusCode, headers: res.headers, body: buffer.toString("utf8") });
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: buffer.toString("utf8"), remoteAddress: res.socket && res.socket.remoteAddress ? res.socket.remoteAddress : "" });
         } catch (err) {
           reject(err);
         }
@@ -233,7 +265,7 @@ async function requestSiteWithDoH(url, headers) {
         if (response.statusCode !== 200 || !response.body) {
           throw new Error(`HTTP ${response.statusCode} / empty body`);
         }
-        OmniBox.log("info", `[Fast/DoH] Connected to ${hostname} via ${ip}`);
+        OmniBox.log("info", `[Fast/DoH] Connected to ${hostname} via ${ip} (TCP peer ${response.remoteAddress || "unknown"})`);
         return { ip, response };
       } catch (error) {
         errors.push(`${ip}: ${error.message}`);
