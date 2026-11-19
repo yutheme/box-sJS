@@ -2,6 +2,7 @@
 // @author vscode (modified for per-source DoH)
 // @version 1.3.4
 // @description 刮削：支持，弹幕：支持，嗅探：支持
+// @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
  * OmniBox 采集站爬虫 - 小鸡资源
