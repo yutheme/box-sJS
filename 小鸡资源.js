@@ -1,8 +1,8 @@
 // @name 小鸡资源
 // @author vscode (modified for per-source DoH)
-// @version 1.3.6
+// @version 1.3.7-persistent-doh
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
-// @description 刮削：支持，弹幕：支持，嗅探：支持；DoH IP 持久化缓存与严格公网 IP 校验
+// @description 刮削：支持，弹幕：支持，嗅探：支持；修复缓存初始化顺序，DoH IP 持久化与故障切换
 
 /**
  * OmniBox 采集站爬虫 - 小鸡资源
@@ -78,12 +78,6 @@ function loadPersistedSiteIP() {
     OmniBox.log("warn", `[IPCache] Could not read cache: ${error.message}`);
   }
   return "";
-}
-
-let persistedSiteIP = loadPersistedSiteIP();
-let activeSiteIP = persistedSiteIP || INITIAL_BOOTSTRAP_IP;
-if (!persistedSiteIP) {
-  OmniBox.log("info", `[IPCache] No saved IP; using bootstrap IP ${INITIAL_BOOTSTRAP_IP}`);
 }
 
 function persistPreferredSiteIP(ip, source, ttlSeconds) {
@@ -179,6 +173,14 @@ function isPublicIPv4(address) {
   return !NON_GLOBAL_IPV4_CIDRS.some((cidr) => cidrContains(ipNumber, cidr));
 }
 
+// Initialize the persisted IP only after NON_GLOBAL_IPV4_CIDRS has been
+// initialized. Calling loadPersistedSiteIP earlier triggers a TDZ ReferenceError.
+let persistedSiteIP = loadPersistedSiteIP();
+let activeSiteIP = persistedSiteIP || INITIAL_BOOTSTRAP_IP;
+if (!persistedSiteIP) {
+  OmniBox.log("info", `[IPCache] No saved IP; using bootstrap IP ${INITIAL_BOOTSTRAP_IP}`);
+}
+
 function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxBytes = 32 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const url = new URL(targetUrl);
@@ -205,6 +207,7 @@ function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxByte
         chunks.push(chunk);
       });
       res.on("error", reject);
+      const connectedPeer = (req.socket && req.socket.remoteAddress) || (res.socket && res.socket.remoteAddress) || "";
       res.on("end", () => {
         try {
           let buffer = Buffer.concat(chunks);
@@ -212,7 +215,7 @@ function httpsGetUsingIP(targetUrl, ip, headers = {}, timeoutMs = 12000, maxByte
           if (encoding.includes("gzip")) buffer = zlib.gunzipSync(buffer);
           else if (encoding.includes("br")) buffer = zlib.brotliDecompressSync(buffer);
           else if (encoding.includes("deflate")) buffer = zlib.inflateSync(buffer);
-          resolve({ statusCode: res.statusCode, headers: res.headers, body: buffer.toString("utf8"), remoteAddress: res.socket && res.socket.remoteAddress ? res.socket.remoteAddress : "" });
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: buffer.toString("utf8"), remoteAddress: connectedPeer });
         } catch (err) {
           reject(err);
         }
