@@ -1,6 +1,6 @@
 // @name 小鸡资源
 // @author vscode (modified for per-source DoH)
-// @version 1.3.5-persistent-doh
+// @version 1.3.5
 // @description 刮削：支持，弹幕：支持，嗅探：支持；DoH IP 持久化缓存
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
