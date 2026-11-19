@@ -1,7 +1,7 @@
 // @name 小鸡资源
 // @author vscode (modified for per-source DoH)
-// @version 1.3.4
-// @description 刮削：支持，弹幕：支持，嗅探：支持
+// @version 1.3.5-persistent-doh
+// @description 刮削：支持，弹幕：支持，嗅探：支持；DoH IP 持久化缓存
 // @downloadURL https://github.com/yutheme/box-sJS/raw/main/小鸡资源.js
 
 /**
@@ -17,6 +17,8 @@
  */
 
 const OmniBox = require("omnibox_sdk");
+const fs = require("fs");
+const path = require("path");
 const https = require("https");
 const zlib = require("zlib");
 const net = require("net");
@@ -54,12 +56,69 @@ const DOH_RESOLVERS = [
   { name: "Google", hostname: "dns.google", ip: "8.8.8.8", endpoint: "/resolve" },
   { name: "Cloudflare", hostname: "cloudflare-dns.com", ip: "1.1.1.1", endpoint: "/dns-query" },
 ];
+// Bootstrap IP is used only when no persisted last-known-good IP exists.
+// Once a request succeeds, that IP is saved to /app/data and becomes the next
+// startup's preferred IP. If it fails later, DoH discovers and persists a replacement.
+const INITIAL_BOOTSTRAP_IP = "152.233.22.102";
+const DNS_CACHE_FILE = process.env.XIAOJIZY_DNS_CACHE_FILE || "/app/data/xiaojizy_dns_cache.json";
 const DOH_TARGET_HOST = "api.xiaojizy.live";
-// Fast path: this IP was verified reachable from the user's NAS.
-// If it stops working, DoH automatically locates a new working CDN address.
-// To change preferred IP later, edit only this constant.
-const FAST_PRIMARY_IP = "152.233.22.102";
-let activeSiteIP = FAST_PRIMARY_IP;
+
+function loadPersistedSiteIP() {
+  try {
+    if (!fs.existsSync(DNS_CACHE_FILE)) return "";
+    const raw = fs.readFileSync(DNS_CACHE_FILE, "utf8");
+    const data = JSON.parse(raw);
+    if (data && data.hostname === DOH_TARGET_HOST && isPublicIPv4(data.ip)) {
+      OmniBox.log("info", `[IPCache] Loaded preferred IP ${data.ip} (saved ${data.updatedAt || "time unknown"})`);
+      return data.ip;
+    }
+    OmniBox.log("warn", "[IPCache] Cache file is invalid; using bootstrap IP");
+  } catch (error) {
+    OmniBox.log("warn", `[IPCache] Could not read cache: ${error.message}`);
+  }
+  return "";
+}
+
+let persistedSiteIP = loadPersistedSiteIP();
+let activeSiteIP = persistedSiteIP || INITIAL_BOOTSTRAP_IP;
+if (!persistedSiteIP) {
+  OmniBox.log("info", `[IPCache] No saved IP; using bootstrap IP ${INITIAL_BOOTSTRAP_IP}`);
+}
+
+function persistPreferredSiteIP(ip, source, ttlSeconds) {
+  if (!isPublicIPv4(ip) || persistedSiteIP === ip) return;
+  const payload = {
+    version: 1,
+    hostname: DOH_TARGET_HOST,
+    ip,
+    source: source || "successful-connection",
+    ttlSeconds: Number(ttlSeconds) || null,
+    updatedAt: new Date().toISOString(),
+  };
+  const tempFile = `${DNS_CACHE_FILE}.${process.pid || "node"}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(DNS_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(tempFile, JSON.stringify(payload, null, 2), "utf8");
+    fs.renameSync(tempFile, DNS_CACHE_FILE);
+    persistedSiteIP = ip;
+    OmniBox.log("info", `[IPCache] Updated preferred IP to ${ip} (${payload.source})`);
+  } catch (error) {
+    try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (_) {}
+    OmniBox.log("warn", `[IPCache] Could not save IP ${ip}: ${error.message}`);
+  }
+}
+
+function clearPersistedSiteIP(failedIP) {
+  if (!persistedSiteIP || (failedIP && persistedSiteIP !== failedIP)) return;
+  try {
+    if (fs.existsSync(DNS_CACHE_FILE)) fs.unlinkSync(DNS_CACHE_FILE);
+    OmniBox.log("warn", `[IPCache] Removed failed preferred IP ${persistedSiteIP}`);
+  } catch (error) {
+    OmniBox.log("warn", `[IPCache] Could not remove failed IP cache: ${error.message}`);
+  }
+  persistedSiteIP = "";
+}
+
 const dohCache = { hostname: "", ips: [], expiresAt: 0 };
 
 // Keep TCP/TLS sockets alive for sequential home/detail requests.
@@ -187,9 +246,15 @@ async function requestSiteWithDoH(url, headers) {
   // Normal case: avoid DoH overhead and use the previously working IP directly.
   // During a single execution, remember a DoH-recovered IP for all later calls.
   if (activeSiteIP) {
-    const fastResult = await tryIPs([activeSiteIP], 5500);
-    if (fastResult) return fastResult.response;
+    const attemptedPreferredIP = activeSiteIP;
+    const fastResult = await tryIPs([attemptedPreferredIP], 5500);
+    if (fastResult) {
+      activeSiteIP = fastResult.ip;
+      persistPreferredSiteIP(fastResult.ip, "successful-connection", null);
+      return fastResult.response;
+    }
     activeSiteIP = "";
+    clearPersistedSiteIP(attemptedPreferredIP);
   }
 
   // If a prior DoH result is still fresh, try it without another DNS lookup.
@@ -197,6 +262,7 @@ async function requestSiteWithDoH(url, headers) {
     const cached = await tryIPs(dohCache.ips);
     if (cached) {
       activeSiteIP = cached.ip;
+      persistPreferredSiteIP(cached.ip, "in-memory-doh-cache", null);
       return cached.response;
     }
   }
@@ -212,6 +278,7 @@ async function requestSiteWithDoH(url, headers) {
         dohCache.hostname = hostname;
         dohCache.ips = answer.ips;
         dohCache.expiresAt = Date.now() + answer.ttl * 1000;
+        persistPreferredSiteIP(result.ip, resolver.name, answer.ttl);
         return result.response;
       }
     } catch (error) {
